@@ -13,10 +13,11 @@ void syserr(char* msg) { perror(msg); exit(-1); }
 
 typedef struct s
 {
-		char filename[20];
-		char ipAddr[sizeof(struct sockaddr_in)];
-		int portno;
-}PeerFile;
+	char filename[30];
+	int portno;
+	char ipAddr[sizeof(struct sockaddr_in)];
+	struct Peerfile * next;	
+} PeerFile;
 
 PeerFile * head = 0;
 PeerFile * curr = 0;
@@ -24,7 +25,7 @@ PeerFile * curr = 0;
 int main(int argc, char* argv[])
 {
 	  //declarations and memory allocations
-	  int peersockfd, peerPortno, trackerPortno, n, status;
+	  int peersockfd, peerPortno, trackerPortno, n, status, tempPortno;
 	  struct hostent* tracker;
 	  struct sockaddr_in serv_addr, peer_addr;
 	  char buffer[256];
@@ -117,12 +118,39 @@ int main(int argc, char* argv[])
 		   printf("Buffer contains: %s\n", buffer);
 		   
 		   strcpy(command, strtok(buffer, " "));
-		   printf("Buffer contains: %s\n", command);
 		   
 	      if (!strcmp(command, "list"))
          {
 		      send(peersockfd, buffer, BUFFSIZE, 0);
 		      recv(peersockfd, &buffer, BUFFSIZE, 0);
+		      printf("Buffer is sending back: %s\n", buffer);
+		      if (!strcmp(buffer, "Start"))
+		      {
+		         while (strcmp(buffer, "Done") != 0)
+		         {
+		            curr = (PeerFile *)malloc(sizeof(PeerFile));
+		            recv(peersockfd, &buffer, BUFFSIZE, 0);
+		            printf("Filename is: %s\n", buffer);
+			         strcpy(curr->filename, buffer);
+                  recv(peersockfd, &buffer, BUFFSIZE, 0);
+                  printf("ipAddr is: %s\n", buffer);
+			         strcpy(curr->ipAddr, buffer);
+			         recv(peersockfd, &tempPortno, sizeof(int), 0);
+			         printf("Portno is: %d\n", tempPortno);
+			         curr->portno = tempPortno;
+			         curr->next = head;
+			         head = curr;
+			         curr = NULL;
+		         }
+		         curr = head;
+		         int index = 0;
+		         while (curr)
+		         {
+		            printf("%d%s%s:%d", index, curr->filename, curr->ipAddr, curr->portno);
+		            index++;
+		            curr=curr->next;
+		         }
+		      }
          }
          else if (!strcmp(command, "download"))
          {

@@ -18,17 +18,67 @@ typedef struct s
 	struct Peerfile * next;	
 } PeerFile;
 
-typedef struct s
+typedef struct p
 {
    int sockfd;
    struct sockaddr_in addr;
 }Peer;
 
 void syserr(char* msg) { perror(msg); exit(-1); }
-void service(int sock, PeerFile *head);
 
 PeerFile * head=0; 
 PeerFile * curr=0;
+pthread_mutex_t peerLock;
+
+void service(void* temp)
+{
+   char buffer[256];
+   int status, n;
+   char command[20];
+   memset(buffer, 0, sizeof(command));
+   Peer* peer = (Peer*) temp;
+   int sock = peer->sockfd;
+   struct sockaddr_in peer_addr = peer->addr;
+   
+	for(;;)
+	{
+	   pthread_mutex_lock(&peerLock);
+		//clear the buffer and then receive command
+		memset(buffer, 0, BUFFSIZE);
+		n = recv(sock, buffer, BUFFSIZE, 0); 
+		if(n < 0) syserr("Can't receive from client."); 
+		sscanf(buffer, "%s", command);
+		printf("SERVER GOT MESSAGE: %s\n", buffer);
+		
+		if (!strcmp(command, "list"))
+		{
+		   curr = head;
+		   strcpy(buffer, "Start");
+		   printf("Tracker is sending: %s\n", buffer);
+		   send(sock, &buffer, BUFFSIZE, 0);
+		   while (curr)
+		   {
+		      send(sock, curr->filename, sizeof(curr->filename), 0);
+		      send(sock, curr->ipAddr, sizeof(curr->ipAddr), 0);
+		      send(sock, curr->portno, sizeof(int), 0);
+		      curr = curr->next;
+		   }
+		   strcpy(buffer, "Done");
+		   send(sock, &buffer, BUFFSIZE, 0);
+		}
+		else if (!strcmp(command, "exit"))
+		{
+		   printf("Socket received an exit request from peer: %d\n", sock);
+		   //remove files belonging to tracker
+		   status = 1;
+		   send(sock, &status, sizeof(int), 0);
+		   break;
+		}
+		else
+         printf("Unknown command\n");
+      pthread_mutex_unlock(&peerLock);
+	}
+}
 
 int main(int argc, char* argv[])
 {
@@ -40,6 +90,10 @@ int main(int argc, char* argv[])
 	char buffer[256];
 	char peerAddr[sizeof(serv_addr)];
 	Peer *temp;
+	pthread_t peerThread;
+	
+	//initialize thread stuff;
+	pthread_mutex_init(&peerLock, NULL);
 
 	//check for correct number of parameters
 	if (argc == 1)
@@ -79,7 +133,6 @@ int main(int argc, char* argv[])
       newsockfd = accept(sockfd, (struct sockaddr*)&clt_addr, &addrlen);
       if(newsockfd < 0) syserr("can't accept");
 
-      
 		peerInAddr = clt_addr.sin_addr.s_addr;
 		inet_ntop(AF_INET, &peerInAddr, peerAddr, addrlen);
 		printf("The IP address of the client is: %s\n", peerAddr);
@@ -101,41 +154,11 @@ int main(int argc, char* argv[])
 			recv(newsockfd, &buffer, BUFFSIZE, 0); 	
      	}
 		printf("Peer at %s:%d has finished transmitting its contents.\n", peerAddr, peerPortno);
-		
-		
+		temp = (Peer*)malloc(sizeof(Peer));
+      temp->sockfd = newsockfd;
+      temp->addr = clt_addr;
+      pthread_create(&peerThread, NULL, service, (void *) temp);	
    }
    close(sockfd); 
    return 0;
-}
-
-void service(void* temp)
-{
-   char buffer[256];
-   int status, n;
-   char command[20];
-   memset(buffer, 0, sizeof(command));
-   
-	for(;;)
-	{
-		//clear the buffer and then receive command
-		memset(buffer, 0, BUFFSIZE);
-		n = recv(sock, buffer, BUFFSIZE, 0); 
-		if(n < 0) syserr("Can't receive from client."); 
-		sscanf(buffer, "%s", command);
-		printf("SERVER GOT MESSAGE: %s\n", buffer);
-		
-		if (!strcmp(command, "list"))
-		{
-		   
-		}
-		else if (!strcmp(command, "exit"))
-		{
-		   printf("Socket received an exit request from peer: %d\n", sock);
-		   status = 1;
-		   send(sock, &status, sizeof(int), 0);
-		   exit(0);
-		}
-		else
-         printf("Unknown command\n");
-	}
 }
