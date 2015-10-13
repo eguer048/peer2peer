@@ -98,7 +98,6 @@ int main(int argc, char* argv[])
 		  	while ((ent = readdir (dir)) != NULL) 
 			{
 				strcpy(buffer, ent->d_name);
-				printf("Peer is sending: %s\n", buffer);
 			 	send(peersockfd, buffer, BUFFSIZE, 0);
 		  	}
 		  	closedir (dir);

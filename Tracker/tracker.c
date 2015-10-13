@@ -39,12 +39,47 @@ void service(void* temp)
    Peer* peer = (Peer*) temp;
    int sock = peer->sockfd;
    struct sockaddr_in peer_addr = peer->addr;
+   socklen_t addrlen = sizeof(peer_addr);
+   int peerInAddr;
+   int peerPortno, tempPortno;
+   char peerAddr[addrlen];
    
-	for(;;)
+	pthread_mutex_lock(&peerLock);		
+	peerInAddr = peer_addr.sin_addr.s_addr;
+	inet_ntop(AF_INET, &peerInAddr, peerAddr, addrlen);
+	printf("The IP address of the client is: %s\n", peerAddr);
+	peerPortno = ntohs(peer_addr.sin_port);
+	printf("The port of the client is: %d\n", peerPortno);
+	
+   memset(buffer, 0, BUFFSIZE);
+	recv(sock, &buffer, BUFFSIZE, 0);
+	while (strcmp(buffer, "Done") != 0)
 	{
-	   pthread_mutex_lock(&peerLock);
-		//clear the buffer and then receive command
-		memset(buffer, 0, BUFFSIZE);
+		curr = (PeerFile *)malloc(sizeof(PeerFile));
+		strcpy(curr->filename, buffer);
+		printf("Filename is :%s \n", curr->filename);
+		curr->portno = peerPortno;
+		strcpy(curr->ipAddr, peerAddr);
+		curr->next = head;
+		head = curr;
+		curr = NULL;
+
+		recv(sock, &buffer, BUFFSIZE, 0); 	
+   }
+	printf("Peer at %s:%d has finished transmitting its contents.\n", peerAddr, peerPortno);
+	curr = head;
+	int index = 0;
+	while (curr)
+	{
+	   printf("%d %s %s:%d", index, curr->filename, curr->ipAddr, curr->portno);
+	   index++;
+	   curr=curr->next;
+	}
+	pthread_mutex_unlock(&peerLock);
+		
+	for(;;)
+	{		
+		pthread_mutex_lock(&peerLock);
 		n = recv(sock, buffer, BUFFSIZE, 0); 
 		if(n < 0) syserr("Can't receive from client."); 
 		sscanf(buffer, "%s", command);
@@ -58,9 +93,13 @@ void service(void* temp)
 		   send(sock, &buffer, BUFFSIZE, 0);
 		   while (curr)
 		   {
-		      send(sock, curr->filename, sizeof(curr->filename), 0);
-		      send(sock, curr->ipAddr, sizeof(curr->ipAddr), 0);
-		      send(sock, curr->portno, sizeof(int), 0);
+		      strcpy(buffer, curr->filename);
+		      send(sock, buffer, sizeof(curr->filename), 0);
+		      printf("Hello, cracker!\n");
+		      strcpy(buffer, curr->ipAddr);
+		      send(sock, buffer, sizeof(curr->ipAddr), 0);
+		      tempPortno = curr->portno;
+		      send(sock, tempPortno, sizeof(int), 0);
 		      curr = curr->next;
 		   }
 		   strcpy(buffer, "Done");
@@ -84,11 +123,9 @@ int main(int argc, char* argv[])
 {
 	//declarations
    int sockfd, newsockfd, portno;
-	int peerInAddr, peerPortno;
    struct sockaddr_in serv_addr, clt_addr;
    socklen_t addrlen;
 	char buffer[256];
-	char peerAddr[sizeof(serv_addr)];
 	Peer *temp;
 	pthread_t peerThread;
 	
@@ -133,27 +170,7 @@ int main(int argc, char* argv[])
       newsockfd = accept(sockfd, (struct sockaddr*)&clt_addr, &addrlen);
       if(newsockfd < 0) syserr("can't accept");
 
-		peerInAddr = clt_addr.sin_addr.s_addr;
-		inet_ntop(AF_INET, &peerInAddr, peerAddr, addrlen);
-		printf("The IP address of the client is: %s\n", peerAddr);
-		peerPortno = ntohs(clt_addr.sin_port);
-		printf("The port of the client is: %d\n", peerPortno);
-
-		recv(newsockfd, &buffer, BUFFSIZE, 0);
-		while (strcmp(buffer, "Done") != 0)
-		{
-			curr = (PeerFile *)malloc(sizeof(PeerFile));
-			strcpy(curr->filename, buffer);
-			printf("Filename is :%s \n", curr->filename);
-			curr->portno = peerPortno;
-			strcpy(curr->ipAddr, peerAddr);
-			curr->next = head;
-			head = curr;
-			curr = NULL;
-
-			recv(newsockfd, &buffer, BUFFSIZE, 0); 	
-     	}
-		printf("Peer at %s:%d has finished transmitting its contents.\n", peerAddr, peerPortno);
+		
 		temp = (Peer*)malloc(sizeof(Peer));
       temp->sockfd = newsockfd;
       temp->addr = clt_addr;
