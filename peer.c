@@ -5,31 +5,39 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <arpa/inet.h>
 #include <dirent.h>
 #define BUFFSIZE 256
 
 void syserr(char* msg) { perror(msg); exit(-1); }
+void sendall(int tempfd, int newsockfd, char* buffer);
+void recvall(int tempfd, int newsockfd, int size, char* buffer);
+void servSide(int newsockfd, char* buffer);
+void cltSide(char *trackIP, int portTrac, int portClient);
+void peer2peer(uint32_t cIP, int cP, char * filen);
 
 typedef struct s
 {
-	char filename[30];
+	char * filename;
 	int portno;
-	char ipAddr[sizeof(struct sockaddr_in)];
+	uint32_t clientIP;
 	struct Peerfile * next;	
 } PeerFile;
 
-PeerFile * head = 0;
-PeerFile * curr = 0;
+PeerFile * head = NULL;
+PeerFile * curr = NULL;
+PeerFile * tail = NULL;
 	  
 int main(int argc, char* argv[])
 {
 	  //declarations and memory allocations
-	  int peersockfd, peerPortno, trackerPortno, n, status, tempPortno;
-	  struct hostent* tracker;
+	  int peersockfd, newsockfd, trackerPortno, peerPortno, pid;
+	  socklen_t addrlen;
 	  struct sockaddr_in serv_addr, peer_addr;
 	  char buffer[256];
-	  char command[20];
 	  
   
 	  //check for correct number of parameters
@@ -53,15 +61,7 @@ int main(int argc, char* argv[])
 		 fprintf(stderr, "Usage: %s <hostname> <port>\n", argv[0]);
 		 return 1;
 	  }
-
-	  //check that the selected server exists
-	  tracker = gethostbyname(argv[1]);
-	  if(!tracker) 
-	  {
-		 fprintf(stderr, "ERROR: No such tracker: %s\n", argv[1]);
-		 return 2;
-	  }
-
+ 	
 	  //create socket for client 
 	  peersockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	  if(peersockfd < 0) syserr("can't open socket\n");
@@ -72,109 +72,410 @@ int main(int argc, char* argv[])
 	  peer_addr.sin_family = AF_INET;
 	  peer_addr.sin_addr.s_addr = INADDR_ANY;
 	  peer_addr.sin_port = htons(peerPortno);
-
-	  //store the information of the tracker
-	  memset(&serv_addr, 0, sizeof(serv_addr));
-	  serv_addr.sin_family = AF_INET;
-	  serv_addr.sin_addr = *((struct in_addr*)tracker->h_addr);
-	  serv_addr.sin_port = htons(trackerPortno);
 	  
 	  if(bind(peersockfd, (struct sockaddr*)&peer_addr, sizeof(peer_addr)) < 0) 
-		     syserr("can't bind");
-		printf("bind socket to port %d...\n", peerPortno);
+		   syserr("can't bind");
+	  printf("bind socket to port %d...\n", peerPortno);
 
-	  //connect to server
-	  if(connect(peersockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0)
-		 syserr("can't connect to tracker\n");
-	  printf("connect...\n");
-	  
-	  //send all the files and directories within directory
-	  DIR *dir;
-	  struct dirent *ent;
-	  dir = opendir("./");
-
-	  if ((dir != NULL)) 
-	  {	  	
-		  	while ((ent = readdir (dir)) != NULL) 
-			{
-				strcpy(buffer, ent->d_name);
-			 	send(peersockfd, buffer, BUFFSIZE, 0);
-		  	}
-		  	closedir (dir);
-			strcpy(buffer, "Done");
-			send(peersockfd, buffer, 100, 0);
-	  }
+	  listen(peersockfd, 5);
+	  int anotherPeer = 0;
 	  
 	  for(;;)
 	  {
-			memset(buffer, 0, sizeof(buffer));
-			//buffer = NULL;
-			printf("Awaiting command or connection: ");
-			fgets(buffer, sizeof(buffer), stdin);
-		   int len = strlen(buffer);
-	     	if (len>0 && buffer[len-1] == '\n')
-	     	   buffer[len-1] = '\0';
-		   printf("Buffer contains: %s\n", buffer);
-		   
-		   strcpy(command, strtok(buffer, " "));
-		   
-	      if (!strcmp(command, "list"))
-         {
-		      send(peersockfd, buffer, BUFFSIZE, 0);
-		      recv(peersockfd, &buffer, BUFFSIZE, 0);
-		      printf("Buffer is sending back: %s\n", buffer);
-		      if (!strcmp(buffer, "Start"))
-		      {
-		         while (strcmp(buffer, "Done") != 0)
-		         {
-		            curr = (PeerFile *)malloc(sizeof(PeerFile));
-		            recv(peersockfd, &buffer, BUFFSIZE, 0);
-		            printf("Filename is: %s\n", buffer);
-			         strcpy(curr->filename, buffer);
-                  recv(peersockfd, &buffer, BUFFSIZE, 0);
-                  printf("ipAddr is: %s\n", buffer);
-			         strcpy(curr->ipAddr, buffer);
-			         recv(peersockfd, &tempPortno, sizeof(int), 0);
-			         printf("Portno is: %d\n", tempPortno);
-			         curr->portno = tempPortno;
-			         curr->next = head;
-			         head = curr;
-			         curr = NULL;
-		         }
-		         curr = head;
-		         int index = 0;
-		         while (curr)
-		         {
-		            printf("%d%s%s:%d", index, curr->filename, curr->ipAddr, curr->portno);
-		            index++;
-		            curr=curr->next;
-		         }
-		      }
-         }
-         else if (!strcmp(command, "download"))
-         {
-		 
-         }
-         else if (!strcmp(command, "exit"))
-         {
-            //send exit message to server for interpretation
-			   printf("Peer is exiting...\n");
-			   send(peersockfd, buffer, 100, 0);
-			   recv(peersockfd, &status, sizeof(int), 0);
-
-			   //server sends back acknowledgement of the exit signal
-	  		   if (status)
-			   {
-	   		   printf("Tracker removing peer from list...\n");
-	   		   printf("Exit successful.\n");
-	   		   exit(0);
-			   }
-			   else
-	   		   printf("Failure to exit.\n");
-         }
-         else
-         {
-         
-         }   			
+			pid = fork();
+			if (pid < 0) syserr("Error on fork");
+			if (pid == 0)
+			{
+				anotherPeer = 1;
+				printf("Waiting on port %d...\n", peerPortno);
+				addrlen = sizeof(peer_addr);
+				newsockfd = accept(peersockfd, (struct sockaddr*)&peer_addr, &addrlen);
+	  			if(newsockfd < 0) syserr("can't accept"); 
+				servSide(newsockfd, buffer);
+				close(newsockfd); 
+			}
+			else
+			{
+				if (anotherPeer == 0)
+					cltSide(argv[1], trackerPortno, peerPortno);
+			}    			
 	  } 
+}
+
+void servSide(int newsockfd, char* buffer)
+{
+	int n, size, tempfd;
+   struct stat filestats;
+	char * filename;
+	filename = malloc(sizeof(char)*BUFFSIZE);
+	
+	//Receive file name
+   memset(buffer, 0, BUFFSIZE);
+	n = recv(newsockfd, buffer, BUFFSIZE, 0);
+	if(n < 0) syserr("can't receive filename from peer");
+	sscanf(buffer, "%s", filename);
+	printf("filename peer wants to download is: %s\n", filename);
+	
+	//Send file size and file to peer
+	stat(filename, &filestats);
+	size = filestats.st_size;
+	printf("Size of file to send: %d\n", size);
+   size = htonl(size);      
+	n = send(newsockfd, &size, sizeof(int), 0);
+   if(n < 0) syserr("couldn't send size to peer");
+   
+	tempfd = open(filename, O_RDONLY);
+	if(tempfd < 0) syserr("failed to open file");
+	sendall(tempfd, newsockfd, buffer);
+	close(tempfd);
+	
+	//Close the connection to peer	
+	printf("Connection to peer shutting down\n");
+	int status = 1;
+	status = htonl(status);
+	n = send(newsockfd, &status, sizeof(int), 0);
+   if(n < 0) syserr("didn't send exit signal to client");
+}
+
+void cltSide(char *trackHost, int portTrac, int portClient)
+{
+	int socksfd, portno, n, size, listLen;
+  	char input[70];
+  	char *filename;
+  	char *command;
+  	struct hostent* server; // server info
+  	struct sockaddr_in serv_addr; //server address info
+  	char buffer[256];
+  	command = malloc(sizeof(char)*sizeof(buffer));
+  
+  	server = gethostbyname(trackHost);
+  	if(!server) 
+  	{
+    	fprintf(stderr, "ERROR: no such host: %s\n", trackHost);
+    	exit(0);
+  	}
+  	portno = portTrac;
+
+  	socksfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  	if(socksfd < 0) syserr("can't open socket");
+  	printf("create socket as peer client...\n");
+
+ 	//set all to zero, then update the sturct with info
+  	memset(&serv_addr, 0, sizeof(serv_addr)); 
+  	serv_addr.sin_family = AF_INET;
+  	serv_addr.sin_addr = *((struct in_addr*)server->h_addr);
+  	serv_addr.sin_port = htons(portno); 	
+
+ 	//connect with file descriptor, server address and size of addr
+  	if(connect(socksfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0)
+    	syserr("can't connect to tracker");
+  	printf("connect...\n");
+  	printf("Connection established. Waiting for commands...\n");
+  
+  	//Send portClient
+  	int cliP = htons(portClient);
+  	n = send(socksfd, &cliP, sizeof(int), 0);
+  	if(n < 0) syserr("can't send portClient to tracker");
+  
+  	//Send Files
+  	DIR * directory;
+  	struct dirent * filesInfo;
+  	directory = opendir("./");
+  	if(directory != NULL)
+  	{
+  		while((filesInfo = readdir(directory)) != NULL)
+  		{
+  			if(filesInfo -> d_type != DT_DIR)
+  			{
+	  			memset(buffer, 0, sizeof(buffer));
+	  			strcpy(buffer, filesInfo -> d_name);
+	  			printf("File sent to tracker: %s\n", filesInfo -> d_name);
+				n = send(socksfd, buffer, BUFFSIZE, 0);
+				if(n < 0) syserr("can't send filename to tracker");
+			}  		
+  		}
+		memset(buffer, 0, sizeof(buffer));
+		strcpy(buffer, "EndOfList");
+		n = send(socksfd, buffer, BUFFSIZE, 0);
+		if(n < 0) syserr("can't send EndOfList to tracker");
+  	}
+  	for(;;){
+  	printf("%s:%d> ", trackHost, portno);
+  	fgets(buffer, sizeof(input), stdin);
+  	int m = strlen(buffer);
+  	if (m>0 && buffer[m-1] == '\n')
+  		buffer[m-1] = '\0';
+  	
+  	strcpy(command, strtok(buffer, " "));
+  	//printf("The size of command is: %lu\n", sizeof(command));
+  	//printf("The command is: %s\n", command);
+  	if(strcmp(command, "ls-local") == 0)
+  	{	
+  		printf("Files at the Client\n");
+		system("ls -a | cat");
+		printf("\n");
+  	}
+  	else if(strcmp(command, "list") == 0)
+  	{
+  		//Send command, get size of list
+  		memset(buffer, 0, sizeof(buffer));
+		strcpy(buffer, "list");
+		//printf("sent in buffer: %s\n", buffer);
+		n = send(socksfd, buffer, BUFFSIZE, 0);
+		printf("amount of data sent: %d\n", n);
+		if(n < 0) syserr("can't send command to tracker");
+		n = recv(socksfd, &size, sizeof(int), 0); 
+        if(n < 0) syserr("can't receive size of list from tracker");
+        listLen = ntohl(size);
+  		printf("list length: %d\n", listLen);
+        
+        //Make the List POSSIBLE MEM LEAK
+        int i;
+        for(i=1; i<=listLen; i++)
+        {
+  			//printf("start of loop number: %d\n", i);
+        	curr = (PeerFile *)malloc(sizeof(PeerFile));
+  			filename = malloc(sizeof(char)*sizeof(buffer));
+        	n = recv(socksfd, &buffer, BUFFSIZE, 0); 
+    		if(n < 0) syserr("can't receive filename from tracker");
+    		sscanf(buffer, "%s", filename);
+    		curr -> filename = filename;
+  			printf("The filename is: %s\n", curr -> filename);
+  			
+    		uint32_t cIP;
+    		n = recv(socksfd, &cIP, sizeof(uint32_t), 0); 
+    		if(n < 0) syserr("can't receive IP from tracker");
+    		curr -> clientIP = ntohl(cIP);
+    		
+    		int cP;
+    		n = recv(socksfd, &cP, sizeof(int), 0); 
+    		if(n < 0) syserr("can't receive port from tracker");
+    		curr -> portno = ntohl(cP);
+    		//printf("Port# recv is: %d\n", curr -> portno);
+    		
+    		curr -> next = NULL;
+        	if(tail == NULL)
+        	{
+        		tail = curr;
+        		head = curr;
+        	}
+        	else
+        	{
+				tail -> next = curr;
+				tail = curr;
+        	}
+        } 
+        
+        //Print out list to console
+        curr = head;
+        for(i=1; i<=listLen; i++)
+        {
+        	char peerAddr[INET_ADDRSTRLEN];
+        	uint32_t cIP = curr -> clientIP;
+			inet_ntop(AF_INET, &cIP, peerAddr, INET_ADDRSTRLEN);
+        	printf("[%d] %s %s:%d\n", i, curr -> filename, peerAddr, ntohs(curr -> portno));
+        	curr = curr -> next;
+        }
+  	}
+  	else if(strcmp(command, "exit") == 0)
+  	{
+  		memset(buffer, 0, sizeof(buffer));
+		strcpy(buffer, "exit");
+		printf("sending command to tracker: %s\n", buffer);
+		n = send(socksfd, buffer, strlen(buffer), 0);
+		if(n < 0) syserr("can't send command to tracker");
+		printf("sending port to tracker: %d\n", cliP);
+  		n = send(socksfd, &cliP, sizeof(int), 0);
+		if(n < 0) syserr("can't send portno to tracker");
+		n = recv(socksfd, &size, sizeof(int), 0);
+        size = ntohl(size);  
+        if(n < 0) syserr("can't receive exit signal from server");
+        
+		//printf("size was %d from server\n", size);
+		if(size)
+		{
+			printf("Connection to server terminated\n");
+			exit(0);
+		}
+		else
+		{
+			printf("Server didn't exit");
+		}
+		
+  	} 	
+  	else if(strcmp(command, "download") == 0)
+  	{
+  		//Get input, search for file  		
+  		filename = malloc(sizeof(char)*sizeof(buffer));
+  		strcpy(filename, strtok(NULL, " "));
+  		//printf("The filename is: %s\n", filename);
+  		int index = atoi(filename);
+  		free(filename);
+  		if(listLen <= index) syserr("Index too large for list");
+  		curr = head;
+  		int j;
+  		for(j=1; j<index; j++)
+  		{
+  			curr = curr -> next;
+  		}
+  		peer2peer(curr -> clientIP, curr -> portno, curr -> filename);
+  	} 
+  	else
+  	{
+  		printf("Correct commmands are: 'ls-local', 'ls-remote', 'get <filename>' and 				'put <filename>, 'exit''\n");
+  	}  	
+  }
+  close(socksfd);
+}
+
+void sendall(int tempfd, int newsockfd, char* buffer)
+{
+	while (1)
+	{
+		memset(buffer, 0, BUFFSIZE);
+		int bytes_read = read(tempfd, buffer, BUFFSIZE); //is buffer cleared here?
+		buffer[bytes_read] = '\0';
+		if (bytes_read == 0) // We're done reading from the file
+			break;
+
+		if (bytes_read < 0) syserr("error reading file");
+		//printf("The amount of bytes read is: %d\n", bytes_read); 
+		
+		int total = 0;
+		int n;
+		int bytesleft = bytes_read;
+		//printf("The buffer is: \n%s", buffer);
+		while(total < bytes_read)
+		{
+			n = send(newsockfd, buffer+total, bytesleft, 0);
+			if (n == -1) 
+			{ 
+			   syserr("error sending file"); 
+			   break;
+			}
+			//printf("The amount of bytes sent is: %d\n", n);
+			total += n;
+			bytesleft -= n;
+		}
+	}
+}
+
+void peer2peer(uint32_t cIP, int cP, char * filen)
+{
+	int sockfd, portno, n, size, tempfd;
+	char input[70];
+	char *filename;
+	struct hostent* server; // server info
+	struct sockaddr_in serv_addr; //server address info
+	struct stat filestats;
+	char buffer[256];
+	char peerAddr[INET_ADDRSTRLEN];
+	
+	//Convert clientIP to standard dot notation
+	inet_ntop(AF_INET, &cIP, peerAddr, INET_ADDRSTRLEN);
+	
+	server = gethostbyname(peerAddr);
+	if(!server) {
+		fprintf(stderr, "ERROR: no such host: %s\n", peerAddr);
+		return;
+	}
+	portno = cP;
+	filename = filen;
+
+	sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); // check man page
+	if(sockfd < 0) syserr("can't open socket");
+	printf("create socket...\n");
+
+	// set all to zero, then update the sturct with info
+	memset(&serv_addr, 0, sizeof(serv_addr)); 
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_addr = *((struct in_addr*)server->h_addr);
+	serv_addr.sin_port = portno; 	
+
+	// connect with filde descriptor, server address and size of addr
+	if(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0)
+	syserr("can't connect to server");
+	printf("connect...\n");
+	printf("Connection established. Getting files...\n");
+	
+	//Get the file
+	memset(buffer, 0, sizeof(buffer));
+	strcpy(buffer, filename);
+	printf("filename sent to peer is: %s\n", buffer);
+	n = send(sockfd, buffer, BUFFSIZE, 0);
+	//printf("amount of data sent: %d\n", n);
+	if(n < 0) syserr("can't send filename to peer");
+	n = recv(sockfd, &size, sizeof(int), 0); 
+    if(n < 0) syserr("can't receive size of file from peer");
+    size = ntohl(size);        
+	if(size ==0) // check if file exists
+	{
+		printf("File not found at peer\n");
+		return;
+	}
+	printf("The size of the file to recieve is: %d\n", size);
+	tempfd = open(filename, O_CREAT | O_WRONLY, 0666);
+	if(tempfd < 0) syserr("failed to get file");
+	recvall(tempfd, sockfd, size, buffer);
+	printf("Download of '%s' was successful\n", filename);  
+	close(tempfd);
+	
+	//Close connection
+	n = recv(sockfd, &size, sizeof(int), 0);
+    size = ntohl(size);  
+    if(n < 0) syserr("can't receive exit signal from server");
+    
+	//printf("size was %d from server\n", size);
+	if(size)
+	{
+		printf("Connection to server terminated\n");
+	}
+	else
+	{
+		printf("Server didn't exit");
+	}	
+}
+
+void recvall(int tempfd, int newsockfd, int size, char* buffer)
+{
+	int totalWritten = 0;
+	int useSize = 0;
+	while(1)
+	{
+		if(size - totalWritten < BUFFSIZE) 
+		{
+			useSize = size - totalWritten;
+		}
+		else
+		{
+			useSize = BUFFSIZE;
+		}
+			memset(buffer, 0, BUFFSIZE);
+			int total = 0;
+			int bytesleft = useSize; //bytes left to recieve
+			int n;
+			while(total < useSize)
+			{
+				n = recv(newsockfd, buffer+total, bytesleft, 0);
+				if (n == -1) 
+				{ 
+					syserr("error receiving file"); 
+					break;
+				}
+				total += n;
+				bytesleft -= n;
+			}
+			//printf("The buffer is: \n%s", buffer);
+			//printf("Amount of bytes received is for one send: %d\n", total);
+		
+			int bytes_written = write(tempfd, buffer, useSize);
+			//printf("Amount of bytes written to file is: %d\n", bytes_written);
+			totalWritten += bytes_written;
+			//printf("Total amount of bytes written is: %d\n", totalWritten);
+			if (bytes_written == 0 || totalWritten == size) //Done writing into the file
+				break;
+
+			if (bytes_written < 0) syserr("error writing file");
+		
+    }	
 }
