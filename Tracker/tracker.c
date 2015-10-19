@@ -21,7 +21,7 @@ typedef struct s
 	char * filename;
 	int portno;
 	uint32_t clientIP;
-	struct Peerfile * next;	
+	struct s * next;	
 } PeerFile;
 
 typedef struct p
@@ -134,7 +134,7 @@ void * service(void * temp)
 		
 		sscanf(buffer, "%s", fname);
 		printf("Filename received is: %s\n", fname);
-		strcpy(curr -> filename, fname);
+		curr -> filename = fname;
 		curr -> next = NULL;
 		
 		if(tail == NULL)
@@ -156,10 +156,9 @@ void * service(void * temp)
 	{
 	    memset(buffer, 0, BUFFSIZE); 
 		n = recv(newsockfd, buffer, BUFFSIZE, 0);
-		//printf("amount of data recieved: %d\n", n);
 		if(n < 0) syserr("can't receive command from client");
 		sscanf(buffer, "%s", command);
-		//printf("message from client is: %s\n", buffer);
+		printf("message from client is: %s\n", buffer);
 		
 		if(strcmp(command, "list") == 0)
 		{
@@ -172,7 +171,7 @@ void * service(void * temp)
 			{
 				memset(buffer, 0, BUFFSIZE);
 				strcpy(buffer, curr -> filename);
-  				//printf("The filename is: %s\n", buffer);
+  				printf("The filename sent to peer is: %s\n", buffer);
 				n = send(newsockfd, &buffer, BUFFSIZE, 0);
 		    	if(n < 0) syserr("couldn't send filename to client");
 				int cIP = htonl(curr -> clientIP); 
@@ -185,8 +184,6 @@ void * service(void * temp)
 		    	curr = curr -> next;
 			}
 			pthread_mutex_unlock(&peerLock);
-			//sendall(tempfd, newsockfd, buffer);
-			//close(tempfd);			
 		}
 		
 		if(strcmp(command, "exit") == 0)
@@ -210,23 +207,32 @@ void * service(void * temp)
 					free(curr);
 					curr = head;
 					listLen--;
-					if(head == NULL) break; // case: list emptied out
-				} while(curr -> clientIP == clientIP); 
+					if(head == NULL)
+					{
+						tail = NULL;
+						break; // case: list emptied out
+					}
+				} while(curr -> clientIP == clientIP && curr -> portno == cport); 
 			}
 			else
 			{
-				while(curr -> next -> clientIP != clientIP && curr -> portno != cport) 
+				while(!(curr -> next -> clientIP == clientIP && curr -> next -> portno == cport)) 
 				{
 					curr = curr -> next;
 				}
 				do
 				{
 					dltptr = curr -> next;
-					curr = curr -> next -> next;
+					curr -> next = curr -> next -> next;
 					listLen--;
 					free(dltptr);
-				if(curr -> next == NULL) break; // case: list emptied out
-				} while(curr -> next -> clientIP != clientIP);
+					dltptr = NULL;
+					if(curr -> next == NULL)
+					{
+						tail = curr;
+						break;					
+					}
+				} while(curr -> next -> clientIP == clientIP && curr -> next -> portno == cport);
 			}
 			pthread_mutex_unlock(&peerLock);
 						
