@@ -1,7 +1,10 @@
-all:	peer
+all:	tracker peer
 
 peer: peer.c
 	gcc -pthread $< -o $@
+	
+tracker: tracker.c
+	gcc -pthread $< -o $@
 
 clean:
-	rm -f peer *.o *~ core
+	rm -f tracker peer *.o *~ core
